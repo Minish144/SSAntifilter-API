@@ -1,0 +1,28 @@
+services:
+  init:
+    image: alpine
+    command: sh -c "mkdir -p ./data ./lists ./geo && chown -R 1000:1000 ./data ./lists ./geo"
+    volumes:
+      - ./data:/data
+      - ./lists:/lists
+      - ./geo:/geo
+    restart: "no"
+
+  ssantifilter:
+    image: zerolabnet/ssantifilter:latest
+    container_name: ssantifilter
+    pull_policy: missing
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    env_file:
+      - ./.env
+    environment:
+      - PORT=8080
+    volumes:
+      - ./data:/app/rawdata
+      - ./lists:/app/lists
+      - ./geo:/app/geo
+    ports:
+      - '3322:8080'
+    restart: unless-stopped
