@@ -450,6 +450,22 @@ func isAuthenticated(r *http.Request) bool {
     return ok && loggedIn
 }
 
+func isAuthenticatedOrBasicAuth(r *http.Request) bool {
+    // Проверяем сессию
+    if isAuthenticated(r) {
+        return true
+    }
+
+    // Проверяем Basic Auth
+    _, password, ok := r.BasicAuth()
+    if !ok {
+        return false
+    }
+
+    // Пароль обязателен
+    return bcrypt.CompareHashAndPassword([]byte(config.Password), []byte(password)) == nil
+}
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
     if r.Method == "POST" {
         password := r.FormValue("password")
@@ -1702,7 +1718,8 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func retrieveHandler(w http.ResponseWriter, r *http.Request) {
-    if !isAuthenticated(r) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
         return
     }
@@ -1740,7 +1757,8 @@ func retrieveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveHandler(w http.ResponseWriter, r *http.Request) {
-    if !isAuthenticated(r) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
         return
     }
@@ -1850,6 +1868,156 @@ func saveHandler(w http.ResponseWriter, r *http.Request) {
         NewLogs: newLogs,
     }
 
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+}
+
+func addHandler(w http.ResponseWriter, r *http.Request) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+
+    fileName := r.FormValue("fileName")
+    line := strings.TrimSpace(r.FormValue("line"))
+
+    if fileName == "" || line == "" {
+        response := Response{Desc: "fileName and line are required", Level: "fatal"}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+        return
+    }
+
+    rawFilePath := filepath.Join("rawdata", fileName)
+
+    // Читаем существующее содержимое
+    content, err := os.ReadFile(rawFilePath)
+    if err != nil && !os.IsNotExist(err) {
+        response := Response{Desc: "Error reading file: " + err.Error(), Level: "fatal"}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+        return
+    }
+
+    var lines []string
+    if len(content) > 0 && !(len(content) == 1 && content[0] == 0) {
+        contentStr := strings.TrimSpace(string(content))
+        if contentStr != "" {
+            lines = strings.Split(contentStr, "\n")
+        }
+    }
+
+    // Проверяем, есть ли уже такая строка
+    for _, existingLine := range lines {
+        if strings.TrimSpace(existingLine) == line {
+            response := Response{Desc: "Line already exists", Level: "success"}
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(response)
+            addLog(fmt.Sprintf("Line already exists in %s: %s", fileName, line), "info")
+            return
+        }
+    }
+
+    // Добавляем новую строку
+    lines = append(lines, line)
+    newContent := strings.Join(lines, "\n") + "\n"
+
+    err = os.WriteFile(rawFilePath, []byte(newContent), 0644)
+    if err != nil {
+        response := Response{Desc: "Error writing file: " + err.Error(), Level: "fatal"}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+        return
+    }
+
+    addLog(fmt.Sprintf("Line added to %s: %s", fileName, line), "success")
+    response := Response{Desc: "Line added successfully", Level: "success"}
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+}
+
+func removeHandler(w http.ResponseWriter, r *http.Request) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+
+    fileName := r.FormValue("fileName")
+    line := strings.TrimSpace(r.FormValue("line"))
+
+    if fileName == "" || line == "" {
+        response := Response{Desc: "fileName and line are required", Level: "fatal"}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+        return
+    }
+
+    rawFilePath := filepath.Join("rawdata", fileName)
+
+    // Читаем существующее содержимое
+    content, err := os.ReadFile(rawFilePath)
+    if err != nil {
+        http.Error(w, "File not found", http.StatusNotFound)
+        return
+    }
+
+    if len(content) == 1 && content[0] == 0 {
+        http.Error(w, "Line not found", http.StatusNotFound)
+        return
+    }
+
+    contentStr := strings.TrimSpace(string(content))
+    lines := strings.Split(contentStr, "\n")
+
+    // Ищем и удаляем строку
+    found := false
+    var newLines []string
+    for _, existingLine := range lines {
+        if strings.TrimSpace(existingLine) == line {
+            found = true
+            continue
+        }
+        if strings.TrimSpace(existingLine) != "" {
+            newLines = append(newLines, strings.TrimSpace(existingLine))
+        }
+    }
+
+    if !found {
+        http.Error(w, "Line not found", http.StatusNotFound)
+        addLog(fmt.Sprintf("Attempted to remove non-existent line from %s: %s", fileName, line), "warning")
+        return
+    }
+
+    // Записываем обновленное содержимое
+    var newContent string
+    if len(newLines) > 0 {
+        newContent = strings.Join(newLines, "\n") + "\n"
+    } else {
+        newContent = string([]byte{0})
+    }
+
+    err = os.WriteFile(rawFilePath, []byte(newContent), 0644)
+    if err != nil {
+        response := Response{Desc: "Error writing file: " + err.Error(), Level: "fatal"}
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(response)
+        return
+    }
+
+    addLog(fmt.Sprintf("Line removed from %s: %s", fileName, line), "success")
+    response := Response{Desc: "Line removed successfully", Level: "success"}
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
 }
@@ -2064,6 +2232,8 @@ func main() {
     mux.HandleFunc("/logout", logoutHandler)
     mux.HandleFunc("/api/retrieve", retrieveHandler)
     mux.HandleFunc("/api/save", saveHandler)
+    mux.HandleFunc("/api/add", addHandler)
+    mux.HandleFunc("/api/remove", removeHandler)
     mux.HandleFunc("/api/update-antifilter", updateAntifilterHandler)
     mux.HandleFunc("/api/theme", themeHandler)
     mux.HandleFunc("/api/status", statusHandler)
