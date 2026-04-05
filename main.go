@@ -450,6 +450,22 @@ func isAuthenticated(r *http.Request) bool {
     return ok && loggedIn
 }
 
+func isAuthenticatedOrBasicAuth(r *http.Request) bool {
+    // Проверяем сессию
+    if isAuthenticated(r) {
+        return true
+    }
+
+    // Проверяем Basic Auth
+    _, password, ok := r.BasicAuth()
+    if !ok {
+        return false
+    }
+
+    // Пароль обязателен
+    return bcrypt.CompareHashAndPassword([]byte(config.Password), []byte(password)) == nil
+}
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
     if r.Method == "POST" {
         password := r.FormValue("password")
@@ -1702,7 +1718,8 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func retrieveHandler(w http.ResponseWriter, r *http.Request) {
-    if !isAuthenticated(r) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
         return
     }
@@ -1740,7 +1757,8 @@ func retrieveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveHandler(w http.ResponseWriter, r *http.Request) {
-    if !isAuthenticated(r) {
+    if !isAuthenticatedOrBasicAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="SSAntifilter API"`)
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
         return
     }
