@@ -1,5 +1,7 @@
 geo/
 lists/
 rawdata/
+data/
 config.json
 ssantifilter
+.env
