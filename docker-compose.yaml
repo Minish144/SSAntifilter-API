@@ -9,7 +9,7 @@ services:
     restart: "no"
 
   ssantifilter:
-    image: zerolabnet/ssantifilter:latest
+    build: .
     container_name: ssantifilter
     pull_policy: missing
     depends_on:
