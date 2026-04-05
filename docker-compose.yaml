@@ -8,9 +8,9 @@ services:
       - ./geo:/geo
     restart: "no"
 
-  ssantifilter:
+  ssantifilter-api:
     build: .
-    container_name: ssantifilter
+    container_name: ssantifilter-api
     pull_policy: missing
     depends_on:
       init:
